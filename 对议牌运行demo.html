@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>对议牌（基础版）</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: url('https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1350&q=80') no-repeat center center fixed;
+    background-size: cover;
+    margin: 0; padding: 20px;
+    color: #222;
+  }
+  #gameContainer {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: rgba(255,255,255,0.9);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.3);
+  }
+  h1 {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  #playersContainer {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .playerSection {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 45%;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 15px;
+    background: #fafafa;
+    min-height: 350px;
+  }
+  .handCards {
+    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .hiddenCardsContainer {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column; /* 竖排 */
+    gap: 12px;
+    min-height: 120px;
+  }
+  .card {
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    width: 60px;
+    height: 90px;
+    line-height: 90px;
+    text-align: center;
+    font-weight: bold;
+    font-size: 22px;
+    user-select: none;
+    cursor: pointer;
+    border: 2px solid transparent;
+    background: white;
+  }
+  .card.red {
+    color: #b22222;
+  }
+  .card.black {
+    color: #222;
+  }
+  .card.selected {
+    border-color: #3a9afc;
+    background-color: #d0e7ff;
+  }
+  #controls {
+    text-align: center;
+    margin-bottom: 15px;
+  }
+  button {
+    margin: 5px 8px;
+    padding: 8px 14px;
+    font-size: 16px;
+    border-radius: 6px;
+    border: 1.5px solid #3a9afc;
+    background: #65a1ff;
+    color: white;
+    cursor: pointer;
+    user-select: none;
+  }
+  button:disabled {
+    background: #c0c8d8;
+    border-color: #999;
+    cursor: not-allowed;
+  }
+  #scoreboard, #roundInfo, #lastRoundResult {
+    font-size: 18px;
+    margin: 8px 0;
+    white-space: pre-wrap;
+    min-height: 30px;
+  }
+</style>
+</head>
+<body>
+  <div id="gameContainer">
+    <h1>对议牌（基础版）</h1>
+    <div id="playersContainer">
+      <div class="playerSection" id="redPlayer">
+        <h2 id="redTitle">玩家A（先手/R）</h2>
+        <div id="redHand" class="handCards"></div>
+        <div class="hiddenCardsContainer" id="redHidden"></div>
+      </div>
+      <div class="playerSection" id="blackPlayer">
+        <h2 id="blackTitle">玩家B（后手/B）</h2>
+        <div id="blackHand" class="handCards"></div>
+        <div class="hiddenCardsContainer" id="blackHidden"></div>
+      </div>
+    </div>
+    <div id="controls">
+      <button id="submitBtn" disabled>提交扣牌</button>
+      <button id="nextRoundBtn" disabled>下一轮</button>
+      <button id="showCalcBtn">显示议事点数计算</button>
+      <button id="showRuleBtn">查看游戏规则</button>
+      <button id="endGameBtn">中止游戏</button>
+      <button id="restartBtn">重新开始</button>
+    </div>
+    <div id="scoreboard">玩家A得分：0 | 玩家B得分：0</div>
+    <div id="roundInfo">当前轮次：1 / 27</div>
+    <div id="lastRoundResult"></div>
+  </div>
+
+<script>
+  const SUITS = ['♠', '♥', '♣', '♦'];
+  const VALUES = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+  const MAX_ROUNDS = 27;
+
+  let deck = [];
+  let redHandCards = [];
+  let blackHandCards = [];
+  let playerAScore = 0;
+  let playerBScore = 0;
+  let round = 1;
+  let redIsFirst = true; // 玩家A红方先手，玩家B黑方后手
+  let roundFinished = false;
+  let lastRoundDetails = '';
+
+  // 当前选中扣牌索引
+  let redSelectedIndices = [];
+  let blackSelectedIndices = [];
+
+  // 本轮扣置牌
+  let currentRoundRedPut = [];
+  let currentRoundBlackPut = [];
+
+  // 创建牌组（含大小王）
+  function createDeck(){
+    deck = [];
+    for(let s of SUITS){
+      for(let v of VALUES){
+        let color = (s === '♥' || s === '♦') ? 'red' : 'black';
+        deck.push({val: v, suit: s, color: color});
+      }
+    }
+    // 大王红色，小王黑色，点数0
+    deck.push({val:'Jo', suit:'Joker', color:'red'});
+    deck.push({val:'Jo', suit:'Joker', color:'black'});
+    shuffle(deck);
+  }
+  // 洗牌
+  function shuffle(array){
+    for(let i=array.length-1; i>0; i--){
+      let j = Math.floor(Math.random()*(i+1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+  }
+
+  // 发牌
+  function dealHands(){
+    redHandCards = [];
+    blackHandCards = [];
+    for(let i=0; i<4; i++){
+      redHandCards.push(deck.pop());
+      blackHandCards.push(deck.pop());
+    }
+  }
+
+  // 牌面显示名（王牌用Jo）
+  function cardDisplayName(card){
+    if(card.suit === 'Joker') return 'Jo';
+    return card.val + card.suit;
+  }
+
+  // 渲染手牌，添加点击选择功能
+  function renderHands(){
+    const redHandDiv = document.getElementById('redHand');
+    const blackHandDiv = document.getElementById('blackHand');
+    redHandDiv.innerHTML = '';
+    blackHandDiv.innerHTML = '';
+
+    redHandCards.forEach((card, idx) => {
+      const cd = document.createElement('div');
+      cd.className = `card ${card.color}`;
+      cd.textContent = cardDisplayName(card);
+      if(redSelectedIndices.includes(idx)) cd.classList.add('selected');
+      cd.onclick = () => {
+        if(roundFinished) return;
+        // 选中最多2张
+        if(redSelectedIndices.includes(idx)){
+          redSelectedIndices = redSelectedIndices.filter(i=>i!==idx);
+        } else {
+          if(redSelectedIndices.length < 2){
+            redSelectedIndices.push(idx);
+          }
+        }
+        updateSubmitBtnState();
+        renderHands();
+      };
+      redHandDiv.appendChild(cd);
+    });
+
+    blackHandCards.forEach((card, idx) => {
+      const cd = document.createElement('div');
+      cd.className = `card ${card.color}`;
+      cd.textContent = cardDisplayName(card);
+      if(blackSelectedIndices.includes(idx)) cd.classList.add('selected');
+      cd.onclick = () => {
+        if(roundFinished) return;
+        if(blackSelectedIndices.includes(idx)){
+          blackSelectedIndices = blackSelectedIndices.filter(i=>i!==idx);
+        } else {
+          if(blackSelectedIndices.length < 2){
+            blackSelectedIndices.push(idx);
+          }
+        }
+        updateSubmitBtnState();
+        renderHands();
+      };
+      blackHandDiv.appendChild(cd);
+    });
+  }
+
+  // 更新提交按钮是否可用
+  function updateSubmitBtnState(){
+    const redValid = redSelectedIndices.length === 1 || redSelectedIndices.length === 2;
+    const blackValid = blackSelectedIndices.length === 1 || blackSelectedIndices.length === 2;
+    document.getElementById('submitBtn').disabled = !(redValid && blackValid);
+  }
+
+  // 计算牌点数（J=11,Q=12,K=13,A=14, 王牌0）
+  function cardPoint(val){
+    if(val === 'J') return 11;
+    if(val === 'Q') return 12;
+    if(val === 'K') return 13;
+    if(val === 'A') return 14;
+    if(val === 'Jo') return 0;
+    return parseInt(val);
+  }
+
+  // 计算议事点数及得分
+  function judgeScore(redCards, blackCards){
+    let resultText = '';
+
+    const allCards = [...redCards, ...blackCards];
+    const allColors = new Set(allCards.map(c => c.color));
+
+    // 同色落败处理
+    if(allColors.size === 1){
+      let soleColor = allCards[0].color;
+      // 未拥有该颜色的玩家得1分
+      let winnerPlayer = (soleColor === 'red') ? 'B' : 'A';
+      if(winnerPlayer === 'A'){
+        playerAScore++;
+        resultText += `所有扣牌均为${soleColor}色，玩家A得1分（同色落败）。\n`;
+      } else {
+        playerBScore++;
+        resultText += `所有扣牌均为${soleColor}色，玩家B得1分（同色落败）。\n`;
+      }
+      return resultText;
+    }
+
+    // 计算议事点数公式 = 各颜色扣牌点数总和 / 该颜色扣牌张数，向上取整
+    // 先统计红黑两色的扣牌
+    function calcColorPoint(cards, color){
+      const filtered = cards.filter(c => c.color === color);
+      if(filtered.length === 0) return 0;
+      const sum = filtered.reduce((acc, c) => acc + cardPoint(c.val), 0);
+      return Math.ceil(sum / filtered.length);
+    }
+
+    let redPoint = calcColorPoint(allCards, 'red');
+    let blackPoint = calcColorPoint(allCards, 'black');
+
+    // 王牌强制交换议事点数，交换次数=王牌数量
+    const jokerCount = allCards.filter(c => c.suit === 'Joker').length;
+    for(let i=0; i<jokerCount; i++){
+      [redPoint, blackPoint] = [blackPoint, redPoint];
+    }
+
+    resultText += `红色议事点数: ${redPoint}\n黑色议事点数: ${blackPoint}\n王牌交换次数: ${jokerCount}\n`;
+
+    // 判断谁得分，得分绑定玩家，红方为玩家A，黑方为玩家B
+    if(redPoint > blackPoint){
+      playerAScore++;
+      resultText += '玩家A（红方）得1分。\n';
+    } else if(blackPoint > redPoint){
+      playerBScore++;
+      resultText += '玩家B（黑方）得1分。\n';
+    } else {
+      playerAScore++;
+      playerBScore++;
+      resultText += '双方议事点数相等，玩家A和玩家B各得1分。\n';
+    }
+    return resultText;
+  }
+
+  // 展示扣置牌（扣牌区竖向）
+  function renderHiddenCards(){
+    const redHidden = document.getElementById('redHidden');
+    const blackHidden = document.getElementById('blackHidden');
+
+    redHidden.innerHTML = '';
+    blackHidden.innerHTML = '';
+
+    currentRoundRedPut.forEach(card => {
+      const cd = document.createElement('div');
+      cd.className = `card ${card.color}`;
+      cd.textContent = cardDisplayName(card);
+      redHidden.appendChild(cd);
+    });
+
+    currentRoundBlackPut.forEach(card => {
+      const cd = document.createElement('div');
+      cd.className = `card ${card.color}`;
+      cd.textContent = cardDisplayName(card);
+      blackHidden.appendChild(cd);
+    });
+  }
+
+  // 扣牌提交处理
+  function submitMove(){
+    // 扣牌数量限制
+    if(!(redSelectedIndices.length ===1 || redSelectedIndices.length === 2)) return alert('玩家A必须扣1或2张牌');
+    if(!(blackSelectedIndices.length ===1 || blackSelectedIndices.length === 2)) return alert('玩家B必须扣1或2张牌');
+
+    // 取出对应扣牌
+    currentRoundRedPut = redSelectedIndices.map(i => redHandCards[i]);
+    currentRoundBlackPut = blackSelectedIndices.map(i => blackHandCards[i]);
+
+    // 从手牌移除扣置牌
+    redHandCards = redHandCards.filter((_, i) => !redSelectedIndices.includes(i));
+    blackHandCards = blackHandCards.filter((_, i) => !blackSelectedIndices.includes(i));
+
+    redSelectedIndices = [];
+    blackSelectedIndices = [];
+
+    // 显示扣牌
+    renderHiddenCards();
+    renderHands();
+
+    // 计算得分并更新显示
+    lastRoundDetails = judgeScore(currentRoundRedPut, currentRoundBlackPut);
+    updateScoreAndInfo();
+
+    roundFinished = true;
+    toggleButtons();
+
+    // 弃牌（这里直接丢弃不回收）
+    currentRoundRedPut = currentRoundRedPut.concat();
+    currentRoundBlackPut = currentRoundBlackPut.concat();
+
+    document.getElementById('lastRoundResult').textContent = lastRoundDetails;
+  }
+
+  // 更新得分和轮次显示
+  function updateScoreAndInfo(){
+    document.getElementById('scoreboard').textContent = `玩家A得分：${playerAScore} | 玩家B得分：${playerBScore}`;
+    document.getElementById('roundInfo').textContent = `当前轮次：${round} / ${MAX_ROUNDS}`;
+  }
+
+  // 角色互换（先后手交换），仅影响标题显示，得分不变
+  function switchRoles(){
+    redIsFirst = !redIsFirst;
+    if(redIsFirst){
+      document.getElementById('redTitle').textContent = '玩家A（先手/R）';
+      document.getElementById('blackTitle').textContent = '玩家B（后手/B）';
+    } else {
+      document.getElementById('redTitle').textContent = '玩家A（后手/B）';
+      document.getElementById('blackTitle').textContent = '玩家B（先手/R）';
+    }
+  }
+
+  // 摸牌补满至4张，红方先摸
+  function drawCards(){
+    while(redHandCards.length < 4 && deck.length > 0){
+      redHandCards.push(deck.pop());
+    }
+    while(blackHandCards.length < 4 && deck.length > 0){
+      blackHandCards.push(deck.pop());
+    }
+  }
+
+  // 下一轮准备
+  function nextRound(){
+    if(roundFinished === false) return alert('请先提交扣牌！');
+
+    round++;
+    if(round > MAX_ROUNDS || redHandCards.length === 0 || blackHandCards.length === 0){
+      alert('游戏结束！最终得分：\n玩家A：' + playerAScore + '\n玩家B：' + playerBScore);
+      disableAllButtons();
+      return;
+    }
+
+    // 摸牌
+    drawCards();
+
+    // 角色互换（先后手互换）
+    switchRoles();
+
+    // 清空扣牌显示
+    document.getElementById('redHidden').innerHTML = '';
+    document.getElementById('blackHidden').innerHTML = '';
+    document.getElementById('lastRoundResult').textContent = '';
+
+    roundFinished = false;
+    updateScoreAndInfo();
+    redSelectedIndices = [];
+    blackSelectedIndices = [];
+    renderHands();
+    toggleButtons();
+  }
+
+  // 显示或隐藏按钮状态
+  function toggleButtons(){
+    document.getElementById('submitBtn').disabled = roundFinished;
+    document.getElementById('nextRoundBtn').disabled = !roundFinished;
+  }
+
+  // 禁用所有操作按钮
+  function disableAllButtons(){
+    ['submitBtn','nextRoundBtn','showCalcBtn','showRuleBtn','endGameBtn'].forEach(id=>{
+      document.getElementById(id).disabled = true;
+    });
+  }
+
+  // 查看议事点数计算过程按钮
+  function showCalcDetail(){
+    if(lastRoundDetails){
+      alert('本轮议事点数计算：\n\n' + lastRoundDetails);
+    } else {
+      alert('本轮尚未计算议事点数');
+    }
+  }
+
+  // 查看游戏规则按钮
+  function showGameRule(){
+    alert(`对议牌（基础版）游戏规则：
+
+1. 使用一副54张扑克牌（含大小王）。
+2. 玩家A为红方先手，玩家B为黑方后手，轮流扣牌。
+3. 每轮双方各扣置1或2张牌，牌面扣置时对对方不可见。
+4. 扣牌完成后双方展示扣牌，计算议事点数得分：
+   - 若扣牌颜色全同，则未拥有该颜色玩家得1分。
+   - 否则，计算红黑色扣牌点数平均（向上取整），王牌存在则交换点数等同王牌数量。
+   - 点数大者得1分，平局双方各得1分。
+5. 轮次最多27轮，或一方手牌为空游戏结束。
+6. 每轮后双方角色互换先后手，得分绑定玩家不变。
+7. 玩家摸牌补充手牌至4张。
+8. 游戏过程中可查看议事点数计算详情及游戏规则。
+
+祝游戏愉快！`);
+  }
+
+  // 中止游戏
+  function endGame(){
+    if(confirm('确定中止游戏？')){
+      disableAllButtons();
+      alert(`游戏中止！当前得分：
+玩家A：${playerAScore}
+玩家B：${playerBScore}`);
+    }
+  }
+
+  // 重新开始
+  function restartGame(){
+    if(!confirm('重新开始游戏？当前进度将丢失。')) return;
+    playerAScore = 0;
+    playerBScore = 0;
+    round = 1;
+    redIsFirst = true;
+    roundFinished = false;
+    redSelectedIndices = [];
+    blackSelectedIndices = [];
+    currentRoundRedPut = [];
+    currentRoundBlackPut = [];
+    lastRoundDetails = '';
+
+    createDeck();
+    dealHands();
+    renderHands();
+    renderHiddenCards();
+    updateScoreAndInfo();
+    toggleButtons();
+
+    document.getElementById('lastRoundResult').textContent = '';
+    document.getElementById('redTitle').textContent = '玩家A（先手）';
+    document.getElementById('blackTitle').textContent = '玩家B（后手）';
+
+    ['submitBtn','nextRoundBtn','showCalcBtn','showRuleBtn','endGameBtn'].forEach(id=>{
+      document.getElementById(id).disabled = false;
+    });
+  }
+
+  // 初始化游戏
+  function init(){
+    createDeck();
+    dealHands();
+    renderHands();
+    updateScoreAndInfo();
+    toggleButtons();
+  }
+
+  // 绑定事件
+  document.getElementById('submitBtn').onclick = submitMove;
+  document.getElementById('nextRoundBtn').onclick = nextRound;
+  document.getElementById('showCalcBtn').onclick = showCalcDetail;
+  document.getElementById('showRuleBtn').onclick = showGameRule;
+  document.getElementById('endGameBtn').onclick = endGame;
+  document.getElementById('restartBtn').onclick = restartGame;
+
+  init();
+</script>
+</body>
+</html>
